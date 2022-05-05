@@ -14,7 +14,7 @@ from util import *
 
 criterion = nn.MSELoss()
 
-class DDPG(object):
+class DDSPG(object):
     def __init__(self, nb_states, nb_actions, args):
         
         if args.seed > 0:
@@ -47,6 +47,7 @@ class DDPG(object):
         # Hyper-parameters
         self.batch_size = args.bsize
         self.tau = args.tau
+        self.dt = args.dt
         self.discount = args.discount
         self.depsilon = 1.0 / args.epsilon
 
@@ -54,6 +55,8 @@ class DDPG(object):
         self.epsilon = 1.0
         self.s_t = None # Most recent state
         self.a_t = None # Most recent action
+        self.a_t2 = None
+        self.d_t = None # Most recent step
         self.is_training = True
 
         # 
@@ -65,14 +68,14 @@ class DDPG(object):
         next_state_batch, terminal_batch = self.memory.sample_and_split(self.batch_size)
 
         # Prepare for the target q batch
-        next_q_values = self.critic_target([
-            to_tensor(next_state_batch, volatile=True),
-            self.actor_target(to_tensor(next_state_batch, volatile=True)),
-        ])
-        next_q_values.volatile=False
+        with torch.no_grad():
+            next_q_values = self.critic_target([
+                to_tensor(next_state_batch),
+                self.actor_target(to_tensor(next_state_batch)),
+            ])
 
-        target_q_batch = to_tensor(reward_batch) + \
-            self.discount*to_tensor(terminal_batch.astype(np.float))*next_q_values
+            target_q_batch = to_tensor(reward_batch) + \
+                self.discount*to_tensor(terminal_batch.astype(float))*next_q_values
 
         # Critic update
         self.critic.zero_grad()
@@ -111,31 +114,47 @@ class DDPG(object):
         self.critic.cuda()
         self.critic_target.cuda()
 
-    def observe(self, r_t, s_t1, done):
+    def observe(self, r_t, s_t2, done):
         if self.is_training:
-            self.memory.append(self.s_t, self.a_t, r_t, done)
-            self.s_t = s_t1
+            self.memory.append(np.concatenate((np.array([self.s_t]),np.array([self.a_t])),axis=1), self.d_t, r_t, done)
+            # self.memory.append(self.s_t, self.a_t, r_t, done)
+            self.s_t = s_t2
+            self.a_t = self.a_t2
+
+    def init_action(self, init_val=0.0):
+        return init_val * np.ones(self.nb_actions)
 
     def random_action(self):
-        action = np.random.uniform(-1.,1.,self.nb_actions)
-        self.a_t = action
-        return action
+        step = np.random.uniform(-1.,1.,self.nb_actions)
 
-    def select_action(self, s_t, decay_epsilon=True):
-        action = to_numpy(
-            self.actor(to_tensor(np.array([s_t])))
+        action = self.a_t + step * self.dt
+        action = np.clip(action, -1., 1.)
+
+        self.a_t2 = action
+        self.d_t = step
+        return action
+    
+    def select_action(self, s_t, a_t, decay_epsilon=True):
+        step = to_numpy(
+            self.actor(to_tensor(
+                np.concatenate((np.array([self.s_t]),np.array([self.a_t])),axis=1)
+                ))
         ).squeeze(0)
-        action += self.is_training*max(self.epsilon, 0)*self.random_process.sample()
+        step += self.is_training*max(self.epsilon, 0)*self.random_process.sample()
+
+        action = self.a_t + step * self.dt
         action = np.clip(action, -1., 1.)
 
         if decay_epsilon:
             self.epsilon -= self.depsilon
         
-        self.a_t = action
+        self.a_t2 = action
+        self.d_t = step
         return action
 
-    def reset(self, obs):
+    def reset(self, obs, action):
         self.s_t = obs
+        self.a_t = action
         self.random_process.reset_states()
 
     def load_weights(self, output):
