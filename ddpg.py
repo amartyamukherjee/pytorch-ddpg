@@ -60,7 +60,9 @@ class DDSPG(object):
         self.is_training = True
 
         # 
-        if USE_CUDA: self.cuda()
+        if USE_CUDA: 
+            print("Using CUDA")
+            self.cuda()
 
     def update_policy(self):
         # Sample batch
