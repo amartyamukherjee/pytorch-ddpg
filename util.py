@@ -1,4 +1,4 @@
-
+import numpy as np
 import os
 import torch
 from torch.autograd import Variable
@@ -70,4 +70,6 @@ def get_output_folder(parent_dir, env_name):
     os.makedirs(parent_dir, exist_ok=True)
     return parent_dir
 
+def combine_state_and_action(state,action):
+    return np.concatenate((np.array([state]),np.array([action])),axis=1)
 

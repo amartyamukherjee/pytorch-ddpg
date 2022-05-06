@@ -36,8 +36,7 @@ class Evaluator(object):
             done = False
             while not done:
                 # basic operation, action ,reward, blablabla ...
-                step = agent.select_action(observation, action, decay_epsilon=False)
-                action = action + step * agent.dt
+                action = agent.select_action(observation, action, decay_epsilon=False)
 
                 observation, reward, done, info = env.step(action)
                 if self.max_episode_length and episode_steps >= self.max_episode_length -1:

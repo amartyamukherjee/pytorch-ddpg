@@ -72,7 +72,6 @@ def test(num_episodes, agent, env, evaluate, model_path, visualize=True, debug=F
     agent.load_weights(model_path)
     agent.is_training = False
     agent.eval()
-    policy = lambda x,a: agent.select_action(x, a, decay_epsilon=False)
 
     for i in range(num_episodes):
         validate_reward = evaluate(env, agent, debug=debug, visualize=visualize, save=False)
@@ -87,8 +86,9 @@ if __name__ == "__main__":
     parser.add_argument('--env', default='Pendulum-v1', type=str, help='open-ai gym environment')
     parser.add_argument('--hidden1', default=400, type=int, help='hidden num of first fully connect layer')
     parser.add_argument('--hidden2', default=300, type=int, help='hidden num of second fully connect layer')
-    parser.add_argument('--rate', default=0.001, type=float, help='learning rate')
-    parser.add_argument('--prate', default=0.0001, type=float, help='policy net learning rate (only for DDPG)')
+    parser.add_argument('--rate', default=0.01, type=float, help='learning rate')
+    parser.add_argument('--prate', default=0.001, type=float, help='policy net learning rate (only for DDPG)')
+    parser.add_argument('--lr_decay', default=0.9999, type=float, help='learning rate decay')
     parser.add_argument('--warmup', default=100, type=int, help='time without training but only filling the replay memory')
     parser.add_argument('--discount', default=0.99, type=float, help='')
     parser.add_argument('--bsize', default=64, type=int, help='minibatch size')
@@ -96,6 +96,7 @@ if __name__ == "__main__":
     parser.add_argument('--window_length', default=1, type=int, help='')
     parser.add_argument('--tau', default=0.001, type=float, help='moving average for target network')
     parser.add_argument('--dt', default=0.1, type=float, help='time step size for environment')
+    parser.add_argument('--lipschitz_constant', default=1, type=float, help='lipschitz constant')
     parser.add_argument('--ou_theta', default=0.15, type=float, help='noise theta')
     parser.add_argument('--ou_sigma', default=0.2, type=float, help='noise sigma') 
     parser.add_argument('--ou_mu', default=0.0, type=float, help='noise mu') 
@@ -117,11 +118,19 @@ if __name__ == "__main__":
     if args.resume == 'default':
         args.resume = 'output/{}-run0'.format(args.env)
 
-    env = NormalizedEnv(gym.make(args.env))
+    env = gym.make(args.env)
+    args.action_space_high = env.action_space.high
+    args.action_space_low = env.action_space.low
+
+    try:
+        args.dt = env.dt
+        print("Using environment timestep: "+str(args.dt))
+    except:
+        print("Using custom timestep: "+str(args.dt))
 
     if args.seed > 0:
         np.random.seed(args.seed)
-        env.seed(args.seed)
+        env.reset(seed=args.seed)
 
     nb_states = env.observation_space.shape[0]
     nb_actions = env.action_space.shape[0]

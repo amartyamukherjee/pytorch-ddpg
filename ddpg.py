@@ -4,6 +4,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 from torch.optim import Adam
+from torch.optim.lr_scheduler import ExponentialLR
 
 from model import (Actor, Critic)
 from memory import SequentialMemory
@@ -32,22 +33,25 @@ class DDSPG(object):
         self.actor = Actor(self.nb_states, self.nb_actions, **net_cfg)
         self.actor_target = Actor(self.nb_states, self.nb_actions, **net_cfg)
         self.actor_optim  = Adam(self.actor.parameters(), lr=args.prate)
+        self.actor_scheduler = ExponentialLR(self.actor_optim, gamma=args.lr_decay)
 
         self.critic = Critic(self.nb_states, self.nb_actions, **net_cfg)
         self.critic_target = Critic(self.nb_states, self.nb_actions, **net_cfg)
         self.critic_optim  = Adam(self.critic.parameters(), lr=args.rate)
+        self.critic_scheduler = ExponentialLR(self.critic_optim, gamma=args.lr_decay)
 
         hard_update(self.actor_target, self.actor) # Make sure target is with the same weight
         hard_update(self.critic_target, self.critic)
         
         #Create replay buffer
         self.memory = SequentialMemory(limit=args.rmsize, window_length=args.window_length)
-        self.random_process = OrnsteinUhlenbeckProcess(size=nb_actions, theta=args.ou_theta, mu=args.ou_mu, sigma=args.ou_sigma)
+        self.random_process = OrnsteinUhlenbeckProcess(size=nb_actions, theta=args.ou_theta, mu=args.ou_mu, sigma=args.ou_sigma, dt=args.dt)
 
         # Hyper-parameters
         self.batch_size = args.bsize
         self.tau = args.tau
         self.dt = args.dt
+        self.lipschitz_constant = args.lipschitz_constant
         self.discount = args.discount
         self.depsilon = 1.0 / args.epsilon
 
@@ -58,6 +62,9 @@ class DDSPG(object):
         self.a_t2 = None
         self.d_t = None # Most recent step
         self.is_training = True
+
+        self.action_space_high = args.action_space_high
+        self.action_space_low = args.action_space_low
 
         # 
         if USE_CUDA: 
@@ -87,6 +94,7 @@ class DDSPG(object):
         value_loss = criterion(q_batch, target_q_batch)
         value_loss.backward()
         self.critic_optim.step()
+        self.critic_scheduler.step()
 
         # Actor update
         self.actor.zero_grad()
@@ -99,6 +107,7 @@ class DDSPG(object):
         policy_loss = policy_loss.mean()
         policy_loss.backward()
         self.actor_optim.step()
+        self.actor_scheduler.step()
 
         # Target update
         soft_update(self.actor_target, self.actor, self.tau)
@@ -118,7 +127,7 @@ class DDSPG(object):
 
     def observe(self, r_t, s_t2, done):
         if self.is_training:
-            self.memory.append(np.concatenate((np.array([self.s_t]),np.array([self.a_t])),axis=1), self.d_t, r_t, done)
+            self.memory.append(combine_state_and_action(self.s_t,self.a_t), self.d_t, r_t, done)
             # self.memory.append(self.s_t, self.a_t, r_t, done)
             self.s_t = s_t2
             self.a_t = self.a_t2
@@ -127,10 +136,10 @@ class DDSPG(object):
         return init_val * np.ones(self.nb_actions)
 
     def random_action(self):
-        step = np.random.uniform(-1.,1.,self.nb_actions)
+        step = np.random.uniform(-1.,1.,self.nb_actions) * self.lipschitz_constant
 
         action = self.a_t + step * self.dt
-        action = np.clip(action, -1., 1.)
+        action = np.clip(action, self.action_space_low, self.action_space_high)
 
         self.a_t2 = action
         self.d_t = step
@@ -139,13 +148,15 @@ class DDSPG(object):
     def select_action(self, s_t, a_t, decay_epsilon=True):
         step = to_numpy(
             self.actor(to_tensor(
-                np.concatenate((np.array([self.s_t]),np.array([self.a_t])),axis=1)
+                combine_state_and_action(s_t,a_t)
                 ))
         ).squeeze(0)
-        step += self.is_training*max(self.epsilon, 0)*self.random_process.sample()
 
-        action = self.a_t + step * self.dt
-        action = np.clip(action, -1., 1.)
+        noise = self.random_process.sample()
+        step = (step + self.is_training * max(self.epsilon, 0) * noise) * self.lipschitz_constant * self.dt
+
+        action = a_t + step
+        action = np.clip(action, self.action_space_low, self.action_space_high)
 
         if decay_epsilon:
             self.epsilon -= self.depsilon
