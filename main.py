@@ -8,12 +8,12 @@ import gym
 
 from normalized_env import NormalizedEnv
 from evaluator import Evaluator
-from ddpg import DDSPG
+from ddpg import DDPG
 from util import *
 
 # gym.undo_logger_setup()
 
-def train(num_iterations, agent, env,  evaluate, validate_steps, output, init_action=0.0, max_episode_length=None, debug=False):
+def train(num_iterations, agent, env,  evaluate, validate_steps, output, max_episode_length=None, debug=False):
 
     agent.is_training = True
     step = episode = episode_steps = 0
@@ -23,14 +23,13 @@ def train(num_iterations, agent, env,  evaluate, validate_steps, output, init_ac
         # reset if it is the start of episode
         if observation is None:
             observation = deepcopy(env.reset())
-            action = agent.init_action()
-            agent.reset(observation,action)
+            agent.reset(observation)
 
         # agent pick action ...
         if step <= args.warmup:
             action = agent.random_action()
         else:
-            action = agent.select_action(observation,action)
+            action = agent.select_action(observation)
         
         # env response with next_observation, reward, terminate_info
         observation2, reward, done, info = env.step(action)
@@ -45,7 +44,8 @@ def train(num_iterations, agent, env,  evaluate, validate_steps, output, init_ac
         
         # [optional] evaluate
         if evaluate is not None and validate_steps > 0 and step % validate_steps == 0:
-            validate_reward = evaluate(env, agent, debug=False, visualize=False)
+            policy = lambda x: agent.select_action(x, decay_epsilon=False)
+            validate_reward = evaluate(env, policy, debug=False, visualize=False)
             if debug: prYellow('[Evaluate] Step_{:07d}: mean_reward:{}'.format(step, validate_reward))
 
         # [optional] save intermideate model
@@ -72,9 +72,10 @@ def test(num_episodes, agent, env, evaluate, model_path, visualize=True, debug=F
     agent.load_weights(model_path)
     agent.is_training = False
     agent.eval()
+    policy = lambda x: agent.select_action(x, decay_epsilon=False)
 
     for i in range(num_episodes):
-        validate_reward = evaluate(env, agent, debug=debug, visualize=visualize, save=False)
+        validate_reward = evaluate(env, policy, debug=debug, visualize=visualize, save=False)
         if debug: prYellow('[Evaluate] #{}: mean_reward:{}'.format(i, validate_reward))
 
 
@@ -83,12 +84,11 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='PyTorch on TORCS with Multi-modal')
 
     parser.add_argument('--mode', default='train', type=str, help='support option: train/test')
-    parser.add_argument('--env', default='Pendulum-v1', type=str, help='open-ai gym environment')
+    parser.add_argument('--env', default='Pendulum-v0', type=str, help='open-ai gym environment')
     parser.add_argument('--hidden1', default=400, type=int, help='hidden num of first fully connect layer')
     parser.add_argument('--hidden2', default=300, type=int, help='hidden num of second fully connect layer')
-    parser.add_argument('--rate', default=0.01, type=float, help='learning rate')
-    parser.add_argument('--prate', default=0.001, type=float, help='policy net learning rate (only for DDPG)')
-    parser.add_argument('--lr_decay', default=0.9999, type=float, help='learning rate decay')
+    parser.add_argument('--rate', default=0.001, type=float, help='learning rate')
+    parser.add_argument('--prate', default=0.0001, type=float, help='policy net learning rate (only for DDPG)')
     parser.add_argument('--warmup', default=100, type=int, help='time without training but only filling the replay memory')
     parser.add_argument('--discount', default=0.99, type=float, help='')
     parser.add_argument('--bsize', default=64, type=int, help='minibatch size')
@@ -96,7 +96,6 @@ if __name__ == "__main__":
     parser.add_argument('--window_length', default=1, type=int, help='')
     parser.add_argument('--tau', default=0.001, type=float, help='moving average for target network')
     parser.add_argument('--dt', default=0.1, type=float, help='time step size for environment')
-    parser.add_argument('--lipschitz_constant', default=1, type=float, help='lipschitz constant')
     parser.add_argument('--ou_theta', default=0.15, type=float, help='noise theta')
     parser.add_argument('--ou_sigma', default=0.2, type=float, help='noise sigma') 
     parser.add_argument('--ou_mu', default=0.0, type=float, help='noise mu') 
@@ -118,10 +117,7 @@ if __name__ == "__main__":
     if args.resume == 'default':
         args.resume = 'output/{}-run0'.format(args.env)
 
-    env = gym.make(args.env)
-    args.action_space_high = env.action_space.high
-    args.action_space_low = env.action_space.low
-
+    env = NormalizedEnv(gym.make(args.env))
     try:
         args.dt = env.dt
         print("Using environment timestep: "+str(args.dt))
@@ -136,7 +132,7 @@ if __name__ == "__main__":
     nb_actions = env.action_space.shape[0]
 
 
-    agent = DDSPG(nb_states, nb_actions, args)
+    agent = DDPG(nb_states, nb_actions, args)
     evaluate = Evaluator(args.validate_episodes, 
         args.validate_steps, args.output, max_episode_length=args.max_episode_length)
 

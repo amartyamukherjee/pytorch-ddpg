@@ -14,29 +14,26 @@ class Evaluator(object):
         self.save_path = save_path
         self.results = np.array([]).reshape(num_episodes,0)
 
-    def __call__(self, env, agent, debug=False, visualize=False, save=True):
+    def __call__(self, env, policy, debug=False, visualize=False, save=True):
 
         self.is_training = False
         observation = None
-        action = None
         result = []
 
         for episode in range(self.num_episodes):
 
             # reset at the start of episode
             observation = env.reset()
-            action = agent.init_action()
             episode_steps = 0
             episode_reward = 0.
                 
             assert observation is not None
-            assert action is not None
 
             # start episode
             done = False
             while not done:
                 # basic operation, action ,reward, blablabla ...
-                action = agent.select_action(observation, action, decay_epsilon=False)
+                action = policy(observation)
 
                 observation, reward, done, info = env.step(action)
                 if self.max_episode_length and episode_steps >= self.max_episode_length -1:
