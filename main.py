@@ -93,7 +93,7 @@ if __name__ == "__main__":
     parser.add_argument('--warmup', default=500, type=int, help='time without training but only filling the replay memory')
     parser.add_argument('--discount', default=0.99, type=float, help='')
     parser.add_argument('--bsize', default=128, type=int, help='minibatch size')
-    parser.add_argument('--rmsize', default=6000000, type=int, help='memory size')
+    parser.add_argument('--rmsize', default=1000000, type=int, help='memory size')
     parser.add_argument('--window_length', default=1, type=int, help='')
     parser.add_argument('--tau', default=0.001, type=float, help='moving average for target network')
     parser.add_argument('--dt', default=0.1, type=float, help='time step size for environment')
